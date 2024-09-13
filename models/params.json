@@ -1,0 +1,23 @@
+{
+    "PassYards":{
+        "min_obs": 5,
+        "diff_criteria": {
+            "min_threshold": 10,
+            "max_threshold" : 35
+        },
+        "prob_criteria": {
+            "min_threshold": 0.05,
+            "max_threshold" : 99
+        },
+        "std_estimation": "player",
+        "k": ""
+    },
+    "RushYards":{
+        "min_obs" : 5,
+        "std_estimation" : "k-nearest-season-projection",
+        "k" : 5,
+        "min_threshold" : 0.10,
+        "max_threshold" : 0.20
+    }
+
+}

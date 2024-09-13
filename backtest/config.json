@@ -1,0 +1,18 @@
+{
+    "backtest_year": 2023,
+    "target": "PassYards",
+    "sportsbooks": ["Caesars", "FanDuel", "BetOnline", "Pinnacle"],
+    "lower_odds_bound": 150,
+    "upper_odds_bound": -150,
+    "min_obs": 5,
+    "diff_criteria": {
+        "min_threshold": 10,
+        "max_threshold" : 35
+    },
+    "prob_criteria": {
+        "min_threshold": 0.05,
+        "max_threshold" : 99
+    },
+    "std_estimation": "player",
+    "k": ""
+}
