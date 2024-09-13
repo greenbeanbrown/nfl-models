@@ -903,7 +903,7 @@ def find_nearest_neighbors(df, k, projection_col, std_estimation, lookback_years
     """
     if std_estimation == 'k-nearest-season-projection':
         # Need to filter Seasons here differently for backtesting vs prod runs
-        df = df[df['Season'] in [lookback_years]]
+        df = df[df['Season'].isin(lookback_years)]
 
     cohort_column = f"{projection_col}Cohort"
     cohort_proj_column = f"{projection_col}CohortProj"
@@ -914,15 +914,15 @@ def find_nearest_neighbors(df, k, projection_col, std_estimation, lookback_years
     for idx in df.index:
         player_id = df.at[idx, 'PlayerId']
         player_stat_value = df.at[idx, projection_col]
+        position = df.at[idx, 'Position']
         # Calculate the date X days before the game_date
         game_date = game_dates[idx]
         start_date = game_date - pd.Timedelta(days=5)
-        
+        # Filter down to current position
+        working_df = df[df['Position'] == position].copy()
         # Filter to current weeks games based on input
         if std_estimation == 'k-nearest-current-projection':
-            working_df = df[(game_dates >= start_date) & (game_dates <= game_date)].copy()
-        else:
-            working_df = df.copy()
+            working_df = working_df[(game_dates >= start_date) & (game_dates <= game_date)].copy()
             
         # Calculate the absolute differences between the current player's stat value and all other players' stat values
         working_df['diff'] = (working_df[projection_col] - player_stat_value) ** 2
@@ -960,32 +960,11 @@ def estimate_std(df, target, std_estimation, k, lookback_years=None):
         """
         return pd.read_sql_query(query, conn)
 
-    def calc_sample_metrics(df):
-        std_col = f"{target}Std"
-        obs_col = f"{target}Obs"
-        # Calculate the standard deviation and number of observations
-        df[std_col] = df[sample_col].apply(lambda x: np.std(x) if isinstance(x, list) else np.nan)
-        df[obs_col] = df[sample_col].apply(lambda x: len(x) if isinstance(x, list) else 0)
-
-        return df
-
-    # Function to create a list of historical stat up to each GameDate
-    def create_player_sample(group):
-        historical_data = []
-        for index, row in group.iterrows():
-            # Include all assists from rows with an earlier GameDate
-            historical = [x for x in group[group['GameDate'] < row['GameDate']][target].tolist() if pd.notna(x)]
-            historical_data.append(historical)
-        return pd.DataFrame({sample_col: historical_data}, index=group.index)
-
-
-    def create_cohort_samples(df, k):
+    def create_cohort_samples(df, table, k):
         # List of columns to calculate the sample for
         cohort_column = f"x{target}Cohort"
         sample_column = f"x{target}Sample"
         df[sample_column] = None
-        # Determine which table to pull from
-        table = 'player_passing' if 'Pass' in target else 'player_rushing' if 'Rush' in target else 'player_receiving'
 
         for idx in df.index:
             game_date = df.at[idx, 'GameDate']
@@ -996,22 +975,25 @@ def estimate_std(df, target, std_estimation, k, lookback_years=None):
             df.at[idx, sample_column] = historical_stats[target].tolist()
 
         # Calculate the standard deviation and number of observations for each sample
-        df = calc_sample_metrics(df)
+        #df = calc_sample_metrics(df)
 
         return df
+    
+    table = 'player_passing' if 'Pass' in target else 'player_rushing' if 'Rush' in target else 'player_receiving'
 
     sample_col = 'x{}Sample'.format(target)
     logging.info('Creating historical sample of %s', target)
     # Apply the function and create the new dataframe
     if std_estimation == 'player':
-        df[sample_col] = df.groupby(['PlayerId', 'Player']).apply(create_player_sample).reset_index(level=[0,1], drop=True)
+        df[sample_col] = df.apply(lambda row: pull_historical_stats(target, [row['PlayerId']], table, row['GameDate'])[target].tolist(), axis=1)
+
     elif std_estimation in ['k-nearest-season-projection']:
         df = find_nearest_neighbors(df, k, 'x{}'.format(target), std_estimation, lookback_years)
-        df = create_cohort_samples(df, k)
+        df = create_cohort_samples(df.copy(), table, k)
 
     elif std_estimation == ['k-nearest-historical-projection', 'k-nearest-current-projection']:
         df = find_nearest_neighbors(df, k, 'x{}'.format(target), std_estimation)
-        df = create_cohort_samples(df, k)
+        df = create_cohort_samples(df, table, k)
 
     # Extract the relevant columns
     #filtered_data = df[['PlayerId', 'GameDate', stat_col, sample_col]].copy()
@@ -1020,6 +1002,6 @@ def estimate_std(df, target, std_estimation, k, lookback_years=None):
     
     # Calculate final param
     df.loc[:, 'NumObs'] = df[sample_col].apply(len)
-    df.loc[:, 'SampleStd'] = df[sample_col].apply(lambda x: np.std(x) if len(x) > 0 else np.nan)
+    df.loc[:, '{}Std'.format(target)] = df[sample_col].apply(lambda x: np.std(x) if len(x) > 0 else np.nan)
 
     return df

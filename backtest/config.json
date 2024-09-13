@@ -10,7 +10,7 @@
         "max_threshold" : 35
     },
     "prob_criteria": {
-        "min_threshold": 0.05,
+        "min_threshold": -99,
         "max_threshold" : 99
     },
     "std_estimation": "player",

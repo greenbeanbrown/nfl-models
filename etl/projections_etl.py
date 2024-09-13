@@ -4,77 +4,42 @@ from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import sessionmaker, relationship
 import pandas as pd
 
-from shared_etl_functions import read_model, nfl_connect, odds_connect, get_modeling_data, get_opp_defense_data, get_latest_moneylines, get_latest_totals
+import json
+
+from shared_etl_functions import read_model, nfl_connect, odds_connect, get_modeling_data, get_opp_defense_data, get_latest_moneylines, get_latest_totals, estimate_std
 from schedule_data_etl import create_schedule_data
+
+import sys
+sys.path.insert(0, '../../bet-app/code/')
+from data_models import Game, Player, NFLProjection
+from functions import create_utc_timestamp, insert_new_records
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 Base = declarative_base()
 
-class NFLProjection(Base):
-    """
-    SQLAlchemy schema for wagers table
-    """
-    __tablename__ = 'projections'   # Use if tying to a specific table
-    # PK
-    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
-    # FK
-    player_id = Column(Integer, ForeignKey('players.oj_id'), nullable=False)  
-    game_id = Column(Integer, ForeignKey('games.id'), nullable=False)  
-
-    source = Column(String(255), nullable=False)
-
-    # PROJECTION FIELDS
-    #pass_att = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #pass_att_std = Column(Float, nullable=True) 
-
-    #pass_comp = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #pass_comp_std = Column(Float, nullable=True)     
-
-    pass_yards = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    pass_yards_std = Column(Float, nullable=True)  
-
-    #pass_td = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #pass_td_std = Column(Float, nullable=True)  
-
-    #pass_int = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #pass_int_std = Column(Float, nullable=True)  
-
-    rush_yards = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    rush_yards_std = Column(Float, nullable=True)  
-
-    #rush_td = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #rush_td_std = Column(Float, nullable=True)  
-
-    #rec_catches = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #rec_catches_std = Column(Float, nullable=True)                      
-
-    #rec_yards = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #rec_yards_std = Column(Float, nullable=True)                      
-
-    #rec_td = Column(Float, nullable=False) # Nulls should be 0s (makes sense for projections)
-    #rec_td_std = Column(Float, nullable=True)                
-
-    timestamp = Column(TIMESTAMP, nullable=False)          
-
-    game = relationship("Game")
-    player = relationship("Player")
-
 def projections_etl(model_dir):
     """
     """
     logging.info("Starting projections ETL process")
-    
+
     # Connect to DBs
     logging.info("Connecting to NFL stats database")
     stats_conn = nfl_connect()
     
     logging.info("Connecting to odds database")
     odds_db_session, engine = odds_connect()
+    # Check if table exists and create if not
+    NFLProjection.__table__.create(bind=engine, checkfirst=True)
 
     # Define current active markets
     targets = ['PassYards','RushYards']
+
+    # Initialize an empty DataFrame with the base columns   
+    agg_projections_data = pd.DataFrame(columns=['GameId2', 'PlayerId', 'Player', 'TeamAbbr', 'GameDate','Position'])
+
 
     for target in targets:
         logging.info(f"Processing: {target}")
@@ -83,6 +48,10 @@ def projections_etl(model_dir):
         model_name = f'xgb_x{target.lower()}_2024'
         model, features = read_model(model_dir, model_name)
         
+        # Read in model parameters
+        with open('../models/prod_params.json', 'r') as file:
+            params = json.load(file)
+
         # Pull data
         historic_modeling_data = get_modeling_data(stats_conn, target, lag=True)
         current_modeling_data = get_modeling_data(stats_conn, target, lag=False)
@@ -141,24 +110,88 @@ def projections_etl(model_dir):
         current_modeling_data['x{}'.format(target)] = model.predict(X_current)
         historic_modeling_data['x{}'.format(target)] = model.predict(X_historic)
 
+        # Combine historic and current week projections before estimating STD
+        combined_cols = ['PlayerId','Player','Position','TeamAbbr','Season','GameId2', 'GameDate', 'x{}'.format(target)]
+        combined_modeling_data = pd.concat([current_modeling_data, historic_modeling_data])[combined_cols]
+        initial_combined_count = len(combined_modeling_data)
+        logging.info(f"Initial combined modeling data size: {initial_combined_count}")
         # Estimate STD
         logging.info(f"Estimating standard deviation for target: {target}")
-        std_estimation = 'player'
-        k = None
-        import ipdb; ipdb.set_trace()
+        std_estimation = params[target]['std_estimation']
+        k = params[target]['k']
+        # Calculte STD off of player's career historical sample
+        if std_estimation == 'player':
+            combined_modeling_data = estimate_std(combined_modeling_data, target, std_estimation, k, lookback_years=[2023,2024])
+        elif std_estimation == 'k-nearest-season-projection':
+            # FLAG - might want to expand to 2023 for early weeks of season to increase sample size
+            combined_modeling_data = estimate_std(combined_modeling_data, target, std_estimation, k, lookback_years=[2024])
+        
+        else:
+            import ipdb; ipdb.set_trace()
+        
+        # Remove historical records after estimating STD
+        projections_data = combined_modeling_data.dropna(subset='GameId2')   # Historical modeling data doesn't have GameId2 field
 
-        #estimate_std(current_modeling_data, historic_modeling_data)
-        import ipdb; ipdb.set_trace()
+        # Log the length of the dataframe after dropping records
+        final_combined_count = len(projections_data)
+        dropped_combined_count = initial_combined_count - final_combined_count
+        logging.info(f"Final combined modeling data size: {final_combined_count}")
+        logging.info(f"Dropped {dropped_combined_count} records from combined modeling data for projections data")
 
-        # Map IDs at some point
-        logging.info(f"Mapping IDs for target: {target}")
+        # Filter resultset down to relevant columns
+        cols = ['GameId2','PlayerId','Player','TeamAbbr','GameDate','Position','x{}'.format(target),'{}Std'.format(target)]
+        projections_data = projections_data[cols]
 
-        # Insert records
-        logging.info(f"Inserting records for target: {target}")
+        # Add current target stat's projections to the agg dataframe
+        agg_projections_data = pd.merge(agg_projections_data, 
+                                        projections_data, 
+                                        on=['GameId2', 'PlayerId', 'Player', 'TeamAbbr', 'GameDate','Position'], 
+                                        how='outer')
+    
+
+    # Map IDs at some point
+    logging.info(f"Mapping GameId2 to internal ID")
+    game_ids = odds_db_session.query(Game.game_id2, Game.id).all()
+    game_ids_df = pd.DataFrame(game_ids, columns=['GameId2', 'game_id'])
+    # Merge internal game IDs to working data
+    agg_projections_data = pd.merge(agg_projections_data, 
+                          game_ids_df, 
+                          on = 'GameId2',
+                          how = 'left')
+
+    # Add projection source (always internal for now)
+    agg_projections_data['source'] = 'internal'
+
+    # Add timestamp
+    agg_projections_data['timestamp'] = create_utc_timestamp()
+
+    # Convert NaN to None for MySQL
+    agg_projections_data = agg_projections_data.replace({pd.NA: None, pd.NaT: None, float('nan'): None})
+
+
+    # Filter and rename columns
+    agg_projections_data = agg_projections_data.rename(columns={'PlayerId':'player_id2',
+                                                                'Position':'position',
+                                                                'xPassYards':'pass_yards',
+                                                                'PassYardsStd':'pass_yards_std',
+                                                                'xRushYards':'rush_yards',
+                                                                'RushYardsStd':'rush_yards_std'})
+    
+    final_cols = ['game_id','player_id2','position','source','pass_yards','pass_yards_std','rush_yards','rush_yards_std', 'timestamp']     
+    new_records_df = agg_projections_data[final_cols].copy()
+
+    # Insert and replace records (for now)
+    logging.info(f"Inserting projection records")
+
+    # Insert new, unique records
+    if not new_records_df.empty:
+        # FLAG: improve this at some point
+        odds_db_session.query(NFLProjection).delete()
+        insert_new_records(odds_db_session, new_records_df, NFLProjection)
 
     logging.info("Projections ETL process completed")
     return
 
 if __name__ == '__main__':
     model_dir = '../models/prod/'
-    projections_etl(model_dir)
+projections_etl(model_dir)
