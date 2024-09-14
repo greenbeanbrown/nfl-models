@@ -199,7 +199,7 @@ def filter_closing_odds(df):
 # Create a new column 'WinProb' in probability_data
 def calc_win_prob(row, target):
     mean = row['x{}'.format(target)]
-    std = row['SampleStd']
+    std = row['{}Std'.format(target)]
     x = row['line']
     cdf_value = norm.cdf(x, loc=mean, scale=std)
     if row['side'] == 'Under':

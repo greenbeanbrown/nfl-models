@@ -26,18 +26,25 @@ import pickle
 
 from scipy.stats import norm
 
-from backtest_functions import read_config, setup_db_connection, get_modeling_data, get_results_data, get_historical_odds, create_player_id, convert_to_decimal, calc_win_prob, create_final_report
+from backtest_functions import read_config, get_results_data, get_historical_odds, create_player_id, convert_to_decimal, calc_win_prob, create_final_report
 import sys
 sys.path.insert(0, '../etl/')
-from shared_etl_functions import read_model, get_modeling_data, estimate_std
+from shared_etl_functions import read_model, get_modeling_data, estimate_std, get_modeling_data, nfl_connect, odds_connect
 
 # Process parameters
 if len(sys.argv) < 2:
     user_model = False
     model_name = None
-else:
+elif len(sys.argv) == 2:   
     user_model = True
     model_name = sys.argv[1]
+elif len(sys.argv) == 3:
+    user_model = True
+    model_name = sys.argv[1]
+    position = sys.argv[2]
+else:
+    print('Invalid params..')
+    raise
 
 # Ensure the logs directory exists
 os.makedirs('./logs', exist_ok=True)
@@ -61,6 +68,11 @@ if __name__ == '__main__':
     """
     # Read in parameters
     config = read_config('config.json')
+    
+    model_name = config.get('model_name')
+    position = config.get('position')
+    user_model = True if model_name is not None else False
+
 
     backtest_year = config.get('backtest_year')
     target = config.get('target')
@@ -96,9 +108,12 @@ if __name__ == '__main__':
         logging.info("No model provided, using only this feature to predict: {}".format(model_name))
 
     # Setup data connections
-    stats_db_conn, odds_db_conn = setup_db_connection()
+    #stats_db_conn, odds_db_conn = setup_db_connection()
+    stats_db_conn = nfl_connect()
+    #odds_db_session, engine = odds_connect()
+
     # Get data
-    modeling_data = get_modeling_data(stats_db_conn, target, lag=True)
+    modeling_data = get_modeling_data(stats_db_conn, target, lag=True, position=position)
     results_data = get_results_data(stats_db_conn, target, backtest_year)
     odds_data = get_historical_odds(target, sportsbooks=sportsbooks)
     # Merge historical and modeling data
@@ -121,7 +136,7 @@ if __name__ == '__main__':
         model_historical_data['x{}'.format(target)] = X[features[0]]
 
     # Create samples and estimate standard deviation
-    predictions_data = estimate_std(model_historical_data, target, std_estimation, k, lookback_years=backtest_year)
+    predictions_data = estimate_std(model_historical_data, target, std_estimation, k, lookback_years=[backtest_year])
 
     # Prep odds data
     odds_data['player_id'] = odds_data['name'].apply(create_player_id)    
@@ -139,9 +154,9 @@ if __name__ == '__main__':
 
     # Merge odds
     if std_estimation != 'player':
-        cols = ['PlayerId','GameDate','Position',target,'x{}'.format(target),'x{}Cohort'.format(target), 'x{}CohortProj'.format(target), 'SampleStd','x{}Sample'.format(target)]
+        cols = ['PlayerId','GameDate','Position',target,'x{}'.format(target),'x{}Cohort'.format(target), 'x{}CohortProj'.format(target), '{}Std'.format(target),'x{}Sample'.format(target)]
     else:
-        cols = ['PlayerId','GameDate','Position',target,'x{}'.format(target), 'SampleStd','x{}Sample'.format(target)]
+        cols = ['PlayerId','GameDate','Position',target,'x{}'.format(target), '{}Std'.format(target),'x{}Sample'.format(target)]
 
     predictions_data = predictions_data[cols]
 

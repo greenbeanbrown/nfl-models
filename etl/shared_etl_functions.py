@@ -18,6 +18,7 @@ import re
 from scipy.stats import norm
 
 sys.path.insert(0, '..')
+from positions import POSITION_ENCODINGS
 from paths import DB_PATH, PLAYER_DATA_PATHS, TEAM_DATA_PATHS,  GAME_INFO_PATHS
 from columns import RAW_PLAYER_STATS_COLS, PLAYER_PASSING_COLS, PLAYER_PASSING_BASE_STAT_COLS, \
                     PLAYER_RUSHING_COLS, PLAYER_RUSHING_BASE_STAT_COLS, \
@@ -167,16 +168,24 @@ def get_latest_moneylines(session, engine):
     session.close()    
     return df
 
-def get_modeling_data(conn, target, lag):
+def get_modeling_data(conn, target, lag, position=None):
     """
     Retrieve data with lagged features 
     for modeling projections
     """
     logging.info('Retrieving modeling data for stat: %s', target)
-    if lag == True:
-        sql_path = '../sql/{}/{}_backtest.sql'.format(target, target.lower(), target.lower())
+
+    if position is not None:
+        if lag == True:
+            sql_path = '../sql/{}/{}_{}_backtest.sql'.format(target, target.lower(), position.lower())
+        else:
+            sql_path = '../sql/{}/{}_{}_prod.sql'.format(target, target.lower(), position.lower())
+
     else:
-        sql_path = '../sql/{}/{}_prod.sql'.format(target, target.lower(), target.lower())
+        if lag == True:
+            sql_path = '../sql/{}/{}_backtest.sql'.format(target, target.lower())
+        else:
+            sql_path = '../sql/{}/{}_prod.sql'.format(target, target.lower())
         
     with open(sql_path, 'r') as sql_file:
         query = sql_file.read()
@@ -666,6 +675,8 @@ def filter_sort_data(player_data, stat_type='player-passing'):
 
     # Remove records where everything is 0
     if stat_type == 'player-positions':
+        # Map to encoded numbers
+        trimmed_data['PositionId'] = trimmed_data['Position'].map(POSITION_ENCODINGS)
         sorted_filtered_data = trimmed_data.sort_values(['Player','GameDate'])
         sorted_filtered_data.reset_index(inplace=True, drop=True)
     elif stat_type == 'game-info':

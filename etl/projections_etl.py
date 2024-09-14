@@ -35,7 +35,7 @@ def projections_etl(model_dir):
     NFLProjection.__table__.create(bind=engine, checkfirst=True)
 
     # Define current active markets
-    targets = ['PassYards','RushYards']
+    targets = ['PassYards','RushYards','RecYards']
 
     # Initialize an empty DataFrame with the base columns   
     agg_projections_data = pd.DataFrame(columns=['GameId2', 'PlayerId', 'Player', 'TeamAbbr', 'GameDate','Position'])
@@ -45,7 +45,7 @@ def projections_etl(model_dir):
         logging.info(f"Processing: {target}")
         
         # Read model and features
-        model_name = f'xgb_x{target.lower()}_2024'
+        model_name = f'xgb_x{target.lower()}_prod'
         model, features = read_model(model_dir, model_name)
         
         # Read in model parameters
@@ -125,7 +125,6 @@ def projections_etl(model_dir):
         elif std_estimation == 'k-nearest-season-projection':
             # FLAG - might want to expand to 2023 for early weeks of season to increase sample size
             combined_modeling_data = estimate_std(combined_modeling_data, target, std_estimation, k, lookback_years=[2024])
-        
         else:
             import ipdb; ipdb.set_trace()
         
@@ -175,9 +174,11 @@ def projections_etl(model_dir):
                                                                 'xPassYards':'pass_yards',
                                                                 'PassYardsStd':'pass_yards_std',
                                                                 'xRushYards':'rush_yards',
-                                                                'RushYardsStd':'rush_yards_std'})
+                                                                'RushYardsStd':'rush_yards_std',
+                                                                'xRecYards':'rec_yards',
+                                                                'RecYardsStd':'rec_yards_std'})
     
-    final_cols = ['game_id','player_id2','position','source','pass_yards','pass_yards_std','rush_yards','rush_yards_std', 'timestamp']     
+    final_cols = ['game_id','player_id2','position','source','pass_yards','pass_yards_std','rush_yards','rush_yards_std','rec_yards','rec_yards_std','timestamp']     
     new_records_df = agg_projections_data[final_cols].copy()
 
     # Insert and replace records (for now)
@@ -186,7 +187,7 @@ def projections_etl(model_dir):
     # Insert new, unique records
     if not new_records_df.empty:
         # FLAG: improve this at some point
-        odds_db_session.query(NFLProjection).delete()
+        #odds_db_session.query(NFLProjection).delete()
         insert_new_records(odds_db_session, new_records_df, NFLProjection)
 
     logging.info("Projections ETL process completed")

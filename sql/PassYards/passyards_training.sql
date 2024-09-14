@@ -8,6 +8,7 @@ SELECT
     ppos.Player,
     ppos.GameDate,
     ppos.Position, 
+    ppos.PositionId, 
     
     -- lag-player-passing
     lppas.Lag3GameAvgLongestPassComp,
@@ -692,4 +693,4 @@ JOIN game_info AS gi
     AND lppas.TeamAbbr = gi.TeamAbbr    
     
 -- WHERE ppos.Position = "QB" AND ppas.PassComp > 4 AND ppos.StarterFlag = "Y" 
-WHERE ppos.Position = "QB" AND gi.Season != 2023
+WHERE ppos.Position = "QB" AND gi.Season != 2024
