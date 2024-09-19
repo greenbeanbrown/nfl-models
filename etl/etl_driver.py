@@ -45,7 +45,7 @@ if __name__ == '__main__':
                   'league-passing','league-rushing','league-receiving','league-plays',
                   'game-info']
     
-    stat_types = ['player-positions']
+    #stat_types = ['player-positions']
 
     # Aggregate raw data
     print('Aggregating raw Player data..')
