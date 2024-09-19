@@ -594,4 +594,4 @@ JOIN game_info AS gi
     AND lprus.TeamAbbr = gi.TeamAbbr    
     
 -- WHERE ppos.Position IN ("RB") AND gi.Season NOT IN (2023, 2024)
-WHERE ppos.Position IN ("QB") AND gi.Season NOT IN (2023, 2024) AND prus.RushAtt > 0
+WHERE ppos.Position IN ("QB") AND gi.Season NOT IN (2023, 2024)  AND prus.RushAtt > 0

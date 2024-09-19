@@ -11,7 +11,7 @@ WITH LatestPlayerReceiving AS (
         AND prec.Player = ppos.Player
         AND prec.GameDate = ppos.GameDate
         AND prec.TeamAbbr = ppos.TeamAbbr
-    WHERE ppos.Position IN ("RB","WR")
+    WHERE ppos.Position IN ("RB","WR","TE")
 )
 
 SELECT 
@@ -678,5 +678,4 @@ JOIN league_plays AS lpla
     ON lprec.GameDate = lpla.GameDate      
     AND lprec.Season = lpla.Season  
      
-WHERE lprec.RowNum = 1
-  
+WHERE lprec.RowNum = 1 

@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 from xgboost import XGBRegressor
 from requests import Session as APISession
 import re
-from scipy.stats import norm
+from scipy.stats import norm, gamma
 
 #### BACKTEST FUNCTIONS ####
 
@@ -52,8 +52,10 @@ def get_results_data(conn, target, backtest_year):
 
     if target == 'PassYards':
         table_name = 'player_passing'
-    elif target == 'RushYards':
+    elif target in ['RushAtt','RushYards']:
         table_name = 'player_rushing'
+    elif target in ['RecYards','Receptions']:
+        table_name = 'player_receiving'
     else:
         import ipdb; ipdb.set_trace()
 
@@ -96,6 +98,12 @@ def prep_odds(raw_df, target, sportsbooks):
         market = 'Player Passing Yards'
     elif target == 'RushYards':
         market = 'Player Rushing Yards'
+    elif target == 'RecYards':
+        market = 'Player Receiving Yards'
+    elif target == 'Receptions':
+        market = 'Player Receptions'
+    elif target == 'RushAtt':
+        market = 'Player Rushing Attempts'        
     else:
         import ipdb; ipdb.set_trace()
 
@@ -142,7 +150,7 @@ def prep_odds(raw_df, target, sportsbooks):
 
     return merged_df
 
-def get_historical_odds(target, sportsbooks):
+def get_historical_odds(target, sportsbooks, odds_type = 'closing'):
     """
     """
     logging.info('Retrieving historical odds data')
@@ -165,15 +173,21 @@ def get_historical_odds(target, sportsbooks):
         if not historical_odds_df.empty:
             # Get last record for each unique bet (to ensure accurate closing odds, otherwise it gets weird)
             cols = ['name','game_date','bet','sportsbook']
-            idx = historical_odds_df.groupby(cols)['close_timestamp'].idxmax()
+            if odds_type == 'closing':
+                idx = historical_odds_df.groupby(cols)['close_timestamp'].idxmax()
+            elif odds_type == 'opening':
+                idx = historical_odds_df.groupby(cols)['open_timestamp'].idxmin()
+
             final_df = historical_odds_df.loc[idx].reset_index(drop=True)   
             agg_df = pd.concat([agg_df, final_df.drop_duplicates()])
     
     # Drop duplicates again
     agg_df.drop_duplicates(inplace=True)
     # Try to filter out odds which aren't valid at close (it throws off results heavily)
-    final_df = filter_closing_odds(agg_df)
+    if odds_type == 'closing':
+        final_df = filter_closing_odds(agg_df)
 
+    logging.info('Retrieved %d records of historical odds data', len(final_df))
     return final_df
 
 def filter_closing_odds(df):
@@ -197,15 +211,69 @@ def filter_closing_odds(df):
     return filtered_odds_data
 
 # Create a new column 'WinProb' in probability_data
-def calc_win_prob(row, target):
+def calc_win_prob(row, distribution, target):
     mean = row['x{}'.format(target)]
     std = row['{}Std'.format(target)]
     x = row['line']
-    cdf_value = norm.cdf(x, loc=mean, scale=std)
+    if distribution == 'normal':
+        cdf_value = norm.cdf(x, loc=mean, scale=std)
+    elif distribution == 'gamma':
+        cdf_value = gamma.cdf(x, a=row['GammaShape'], loc=0, scale=row['GammaScale'])
     if row['side'] == 'Under':
         return cdf_value
     elif row['side'] == 'Over':
         return 1 - cdf_value
+
+def calc_sse(data, pdf_vals):
+    return np.sum((data - pdf_vals) ** 2)
+
+def ecdf(data):
+    sorted_data = np.sort(data)
+    n = len(data)
+    y_vals = np.arange(1, n + 1) / n
+    return sorted_data, y_vals
+
+def calc_prob_params(row, target):
+    mean = row['x{}'.format(target)]
+    std = row['{}Std'.format(target)]
+    
+    # Retrieve the sample data for the player
+    sample_data = row['x{}Sample'.format(target)]
+
+    # Compute the ECDF of the sample data
+    sorted_data, empirical_cdf = ecdf(sample_data)
+
+    # Normal Distribution: Method of Moments
+    norm_params = (mean, std)
+    norm_cdf_vals = norm.cdf(sorted_data, *norm_params)
+
+    # Check for zero or near-zero mean to avoid division by zero
+    if mean == 0:
+        best_fit = 'normal'  # Default to normal if gamma cannot be computed
+        gamma_shape = np.nan
+        gamma_scale = np.nan
+    else:
+        # Gamma Distribution: Method of Moments
+        gamma_shape = (mean / std) ** 2
+        gamma_scale = (std ** 2) / mean
+        gamma_params = (gamma_shape, 0, gamma_scale)  # Shape, loc, scale
+        gamma_cdf_vals = gamma.cdf(sorted_data, *gamma_params)
+
+        # Calculate SSE for both distributions
+        sse_normal = calc_sse(empirical_cdf, norm_cdf_vals)
+        sse_gamma = calc_sse(empirical_cdf, gamma_cdf_vals)
+
+        # Determine the best fit
+        if sse_normal < sse_gamma:
+            best_fit = 'normal'
+            gamma_shape = np.nan  # Not applicable if the best fit is normal
+            gamma_scale = np.nan  # Not applicable if the best fit is normal
+        else:
+            best_fit = 'gamma'
+    
+    # Return results as a Series
+    return pd.Series([best_fit, gamma_shape, gamma_scale], index=['best_fit', 'gamma_shape', 'gamma_scale'])
+
 
 def compile_backtest_results(probability_data, target, features, sportsbook=None):
     """
@@ -259,7 +327,7 @@ def compile_backtest_results(probability_data, target, features, sportsbook=None
 
     # Calculate log loss for line probabilities
     total_line_log_loss = -np.mean(probability_data[probability_data['bet_flag'] == 1].apply(
-        lambda row: np.log(1 / row['closing_decimal']) if row['bet_result'] == 'Win' else np.log(1 - 1 / row['closing_decimal']), axis=1))
+        lambda row: np.log(1 / row['price']) if row['bet_result'] == 'Win' else np.log(1 - 1 / row['price']), axis=1))
 
     # Calculate log loss for model probabilities for bets
     bets_model_log_loss = -np.mean(probability_data[probability_data['bet_flag'] == 1].apply(
@@ -267,7 +335,7 @@ def compile_backtest_results(probability_data, target, features, sportsbook=None
 
     # Calculate log loss for line probabilities for bets
     bets_line_log_loss = -np.mean(probability_data[probability_data['bet_flag'] == 1].apply(
-        lambda row: np.log(1 / row['closing_decimal']) if row['bet_result'] == 'Win' else np.log(1 - 1 / row['closing_decimal']), axis=1))
+        lambda row: np.log(1 / row['price']) if row['bet_result'] == 'Win' else np.log(1 - 1 / row['price']), axis=1))
         
 
     logging.info("Log Loss Error - Model: %s vs Line: %s", total_model_log_loss, total_line_log_loss)
@@ -281,7 +349,9 @@ def compile_backtest_results(probability_data, target, features, sportsbook=None
         logging.info("Positional Profit - Model Bets: \n {}".format(positional_profit))
 
     #logging.info("Features: %s", features)
-
+    overs = probability_data[(probability_data['side'] == 'Over') & (probability_data['bet_flag'] == 1)]
+    unders = probability_data[(probability_data['side'] == 'Under') & (probability_data['bet_flag'] == 1)]
+    logging.info("Flagged Bets by selection: Over {} - Under {}".format(len(overs), len(unders)))
 
     return 
 

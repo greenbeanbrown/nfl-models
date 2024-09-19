@@ -1,20 +1,22 @@
 {
-    "model_name":"xgb_xrushyards_rb_backtest",
-    "position":"RB",
+    "model_name": "xgb_xpassyards_qb_backtest", 
+    "position": "QB",
+    "odds_type": "closing",
     "backtest_year": 2023,
-    "target": "RushYards",
-    "sportsbooks": ["Caesars", "FanDuel", "BetOnline", "Pinnacle"],
+    "target": "PassYards",
+    "sportsbooks": ["Caesars", "BetOnline","FanDuel","Pinnacle"],
     "lower_odds_bound": 150,
     "upper_odds_bound": -150,
+    "distribution":"normal",
     "min_obs": 5,
     "diff_criteria": {
-        "min_threshold": 13,
-        "max_threshold" : 20
+        "min_threshold": 7.5,
+        "max_threshold" : 99
     },
     "prob_criteria": {
-        "min_threshold": 0.1,
-        "max_threshold" : 0.3
+        "min_threshold": 0.05,
+        "max_threshold" : 0.15
     },
-    "std_estimation": "k-nearest-season-projection",
+    "std_estimation": "player",
     "k": 5
 }

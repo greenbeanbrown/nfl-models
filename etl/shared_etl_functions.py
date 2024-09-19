@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 from xgboost import XGBRegressor
 from requests import Session as APISession
 import re
-from scipy.stats import norm
+from scipy.stats import norm, gamma
 
 sys.path.insert(0, '..')
 from positions import POSITION_ENCODINGS
@@ -132,6 +132,38 @@ def get_latest_totals(session, engine):
     return df
 
 
+def get_latest_spreads(session, engine):
+    """
+    """
+    # Get the current UTC time
+    current_utc_time = datetime.utcnow()
+    # Query to retrieve the most recent Moneyline prices for each team from Pinnacle
+    query = (
+        session.query(
+            case(
+                ( func.trim(func.regexp_replace(Bet.bet, '[^a-zA-Z\s]', '')).label('Team')  == Game.home_team, Game.home_team_abbr),  # Calculate team_abbr
+                else_=Game.away_team_abbr
+            ).label('TeamAbbr'),
+            Bet.line.label('PointSpread')  # Use MAX to select one line per game
+        )
+        .join(Game, Bet.game_id == Game.id)  # Correct the join to reference the Game table only once
+        .join(Price, Price.bet_id == Bet.id)  # Join with the Price table
+        .filter(
+            Bet.market_id == "Point Spread",  # Filter for Total Points market
+            Bet.sportsbook_id == "Pinnacle",
+            Price.current_flag.is_(True),
+            Price.is_main == 1,  # Additional filter for is_main = 1
+            Game.league_id == "NFL",  # Filter for Game league
+            Game.start_time >= current_utc_time  # Filter to remove results where Game.start_time is before current UTC time
+        ) # Group by game_id to ensure unique records per game
+    )
+    # Convert query result to a DataFrame
+    #df = pd.DataFrame(engine.connect().execute(query.statement))
+    df = pd.read_sql_query(query.statement, engine)
+    # Close the session
+    session.close()    
+    return df
+
 def get_latest_moneylines(session, engine):
     """
     """
@@ -175,12 +207,17 @@ def get_modeling_data(conn, target, lag, position=None):
     """
     logging.info('Retrieving modeling data for stat: %s', target)
 
-    if position is not None:
+    if type(position) == str:
         if lag == True:
             sql_path = '../sql/{}/{}_{}_backtest.sql'.format(target, target.lower(), position.lower())
         else:
             sql_path = '../sql/{}/{}_{}_prod.sql'.format(target, target.lower(), position.lower())
-
+    elif type(position) == list:
+        formatted_positions = '_'.join([pos.lower() for pos in position])
+        if lag == True:
+            sql_path = '../sql/{}/{}_{}_backtest.sql'.format(target, target.lower(), formatted_positions)
+        else:
+            sql_path = '../sql/{}/{}_{}_prod.sql'.format(target, target.lower(), formatted_positions)
     else:
         if lag == True:
             sql_path = '../sql/{}/{}_backtest.sql'.format(target, target.lower())
@@ -1016,3 +1053,53 @@ def estimate_std(df, target, std_estimation, k, lookback_years=None):
     df.loc[:, '{}Std'.format(target)] = df[sample_col].apply(lambda x: np.std(x) if len(x) > 0 else np.nan)
 
     return df
+
+def calc_sse(data, pdf_vals):
+    return np.sum((data - pdf_vals) ** 2)
+
+def ecdf(data):
+    sorted_data = np.sort(data)
+    n = len(data)
+    y_vals = np.arange(1, n + 1) / n
+    return sorted_data, y_vals
+
+def calc_prob_params(row, target):
+    mean = row['x{}'.format(target)]
+    std = row['{}Std'.format(target)]
+    
+    # Retrieve the sample data for the player
+    sample_data = row['x{}Sample'.format(target)]
+
+    # Compute the ECDF of the sample data
+    sorted_data, empirical_cdf = ecdf(sample_data)
+
+    # Normal Distribution: Method of Moments
+    norm_params = (mean, std)
+    norm_cdf_vals = norm.cdf(sorted_data, *norm_params)
+
+    # Check for zero or near-zero mean to avoid division by zero
+    if mean == 0:
+        best_fit = 'normal'  # Default to normal if gamma cannot be computed
+        gamma_shape = np.nan
+        gamma_scale = np.nan
+    else:
+        # Gamma Distribution: Method of Moments
+        gamma_shape = (mean / std) ** 2
+        gamma_scale = (std ** 2) / mean
+        gamma_params = (gamma_shape, 0, gamma_scale)  # Shape, loc, scale
+        gamma_cdf_vals = gamma.cdf(sorted_data, *gamma_params)
+
+        # Calculate SSE for both distributions
+        sse_normal = calc_sse(empirical_cdf, norm_cdf_vals)
+        sse_gamma = calc_sse(empirical_cdf, gamma_cdf_vals)
+
+        # Determine the best fit
+        if sse_normal < sse_gamma:
+            best_fit = 'normal'
+            gamma_shape = np.nan  # Not applicable if the best fit is normal
+            gamma_scale = np.nan  # Not applicable if the best fit is normal
+        else:
+            best_fit = 'gamma'
+    
+    # Return results as a Series
+    return pd.Series([best_fit, gamma_shape, gamma_scale], index=['best_fit', 'gamma_shape', 'gamma_scale'])

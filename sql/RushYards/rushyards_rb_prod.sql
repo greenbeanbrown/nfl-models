@@ -12,7 +12,7 @@ WITH LatestPlayerRushing AS (
         AND prus.Player = ppos.Player
         AND prus.GameDate = ppos.GameDate
         AND prus.TeamAbbr = ppos.TeamAbbr
-    WHERE ppos.Position IN ("RB","QB")
+    WHERE ppos.Position IN ("RB")
 )
 
 SELECT 

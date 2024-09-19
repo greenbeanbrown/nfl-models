@@ -628,4 +628,4 @@ JOIN game_info AS gi
     AND lprec.GameId2 = gi.GameId2
     AND lprec.TeamAbbr = gi.TeamAbbr    
     
-WHERE ppos.Position  IN ("RB","WR")
+WHERE ppos.Position  IN ("RB","WR","TE")
