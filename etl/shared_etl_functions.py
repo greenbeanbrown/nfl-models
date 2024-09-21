@@ -131,7 +131,6 @@ def get_latest_totals(session, engine):
     session.close()    
     return df
 
-
 def get_latest_spreads(session, engine):
     """
     """
@@ -960,9 +959,9 @@ def find_nearest_neighbors(df, k, projection_col, std_estimation, lookback_years
 
     game_dates = pd.to_datetime(df['GameDate'])
     for idx in df.index:
-        player_id = df.at[idx, 'PlayerId']
+        player_id = df.loc[idx, 'PlayerId']
         player_stat_value = df.at[idx, projection_col]
-        position = df.at[idx, 'Position']
+        position = df.loc[idx, 'Position']
         # Calculate the date X days before the game_date
         game_date = game_dates[idx]
         start_date = game_date - pd.Timedelta(days=5)
@@ -1015,8 +1014,8 @@ def estimate_std(df, target, std_estimation, k, lookback_years=None):
         df[sample_column] = None
 
         for idx in df.index:
-            game_date = df.at[idx, 'GameDate']
-            player_ids = df.at[idx, cohort_column]
+            game_date = df.loc[idx, 'GameDate']
+            player_ids = df.loc[idx, cohort_column]
             # Call pull_historical_stats to get the historical stats for the 5 closest players
             historical_stats = pull_historical_stats(target, player_ids, table, game_date)
             # Convert the historical stats to a list and assign to the new column

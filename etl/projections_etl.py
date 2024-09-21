@@ -12,17 +12,18 @@ from schedule_data_etl import create_schedule_data
 import sys
 sys.path.insert(0, '../../bet-app/code/')
 from data_models import Game, Player, NFLProjection
-from functions import create_utc_timestamp, insert_new_records
+from functions import create_utc_timestamp, insert_new_records, games_etl
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-Base = declarative_base()
 
 def projections_etl(model_dir):
     """
     """
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    Base = declarative_base()
     logging.info("Starting projections ETL process")
 
     # Connect to DBs
@@ -135,7 +136,7 @@ def projections_etl(model_dir):
             qb_std_estimation = params[target]['QB']['std_estimation']
             qb_k = params[target]['QB']['k']            
             qb_distribution = params[target]['QB']['distribution']            
-            qb_combined_modeling_data = pd.concat([qb_current_modeling_data, qb_historic_modeling_data])[combined_cols]
+            qb_combined_modeling_data = pd.concat([qb_current_modeling_data, qb_historic_modeling_data])[combined_cols].reset_index(drop=True)
             qb_combined_modeling_data = estimate_std(qb_combined_modeling_data, target, qb_std_estimation, qb_k, lookback_years=[2024])
             # Determine distribution
             if qb_distribution == 'normal':
@@ -157,8 +158,9 @@ def projections_etl(model_dir):
             rb_std_estimation = params[target]['RB']['std_estimation']
             rb_k = params[target]['RB']['k']            
             rb_distribution = params[target]['RB']['distribution']            
-            rb_combined_modeling_data = pd.concat([rb_current_modeling_data, rb_historic_modeling_data])[combined_cols]
+            rb_combined_modeling_data = pd.concat([rb_current_modeling_data, rb_historic_modeling_data])[combined_cols].reset_index(drop=True)
             rb_combined_modeling_data = estimate_std(rb_combined_modeling_data, target, rb_std_estimation, rb_k, lookback_years=[2024])
+
             # Determine distribution
             if rb_distribution == 'normal':
                 rb_combined_modeling_data['{}Dist'.format(target)] = 'normal'
@@ -169,7 +171,7 @@ def projections_etl(model_dir):
 
 
             # Concatenate them together
-            combined_modeling_data = pd.concat([qb_combined_modeling_data, rb_combined_modeling_data])
+            combined_modeling_data = pd.concat([qb_combined_modeling_data, rb_combined_modeling_data]).reset_index(drop=True)
             
             initial_combined_count = len(combined_modeling_data)
             logging.info(f"Initial combined modeling data size: {initial_combined_count}")       
@@ -187,7 +189,7 @@ def projections_etl(model_dir):
             rb_std_estimation = params[target]['RB']['std_estimation']
             rb_k = params[target]['RB']['k']            
             rb_distribution = params[target]['RB']['distribution']            
-            rb_combined_modeling_data = pd.concat([rb_current_modeling_data, rb_historic_modeling_data])[combined_cols]
+            rb_combined_modeling_data = pd.concat([rb_current_modeling_data, rb_historic_modeling_data])[combined_cols].reset_index(drop=True)
             rb_combined_modeling_data = estimate_std(rb_combined_modeling_data, target, rb_std_estimation, rb_k, lookback_years=[2024])
             # Determine distribution
             if rb_distribution == 'normal':
@@ -209,7 +211,7 @@ def projections_etl(model_dir):
             wr_std_estimation = params[target]['WR']['std_estimation']
             wr_k = params[target]['WR']['k']            
             wr_distribution = params[target]['WR']['distribution']            
-            wr_combined_modeling_data = pd.concat([wr_current_modeling_data, wr_historic_modeling_data])[combined_cols]
+            wr_combined_modeling_data = pd.concat([wr_current_modeling_data, wr_historic_modeling_data])[combined_cols].reset_index(drop=True)
             wr_combined_modeling_data = estimate_std(wr_combined_modeling_data, target, wr_std_estimation, wr_k, lookback_years=[2024])
             # Determine distribution
             if wr_distribution == 'normal':
@@ -231,7 +233,7 @@ def projections_etl(model_dir):
             te_std_estimation = params[target]['TE']['std_estimation']
             te_distribution = params[target]['TE']['distribution']            
             te_k = params[target]['TE']['k']            
-            te_combined_modeling_data = pd.concat([te_current_modeling_data, te_historic_modeling_data])[combined_cols]
+            te_combined_modeling_data = pd.concat([te_current_modeling_data, te_historic_modeling_data])[combined_cols].reset_index(drop=True)
             te_combined_modeling_data = estimate_std(te_combined_modeling_data, target, te_std_estimation, te_k, lookback_years=[2024])
             # Determine distribution
             if te_distribution == 'normal':
@@ -242,7 +244,7 @@ def projections_etl(model_dir):
                 te_combined_modeling_data[['{}Dist'.format(target), 'GammaShape', 'GammaScale']] = te_combined_modeling_data.apply(lambda row: calc_prob_params(row, target=target), axis=1)
 
             # Concatenate them together
-            combined_modeling_data = pd.concat([rb_combined_modeling_data, wr_combined_modeling_data, te_combined_modeling_data])
+            combined_modeling_data = pd.concat([rb_combined_modeling_data, wr_combined_modeling_data, te_combined_modeling_data]).reset_index(drop=True)
             initial_combined_count = len(combined_modeling_data)
             logging.info(f"Initial combined modeling data size: {initial_combined_count}")    
 
@@ -253,7 +255,7 @@ def projections_etl(model_dir):
             historic_modeling_data['x{}'.format(target)] = model.predict(X_historic)
             # Combine historic and current week projections before estimating STD
             combined_cols = ['PlayerId','Player','Position','TeamAbbr','Season','GameId2', 'GameDate', 'x{}'.format(target)]
-            combined_modeling_data = pd.concat([current_modeling_data, historic_modeling_data])[combined_cols]
+            combined_modeling_data = pd.concat([current_modeling_data, historic_modeling_data])[combined_cols].reset_index(drop=True)
             initial_combined_count = len(combined_modeling_data)
             logging.info(f"Initial combined modeling data size: {initial_combined_count}")            
             # Estimate STD
@@ -343,7 +345,7 @@ def projections_etl(model_dir):
     # Insert new, unique records
     if not new_records_df.empty:
         # FLAG: improve this at some point
-        #odds_db_session.query(NFLProjection).delete()
+        odds_db_session.query(NFLProjection).delete()
         insert_new_records(odds_db_session, new_records_df, NFLProjection)
 
     logging.info("Projections ETL process completed")
@@ -351,4 +353,4 @@ def projections_etl(model_dir):
 
 if __name__ == '__main__':
     model_dir = '../models/prod/'
-projections_etl(model_dir)
+    projections_etl(model_dir)

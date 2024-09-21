@@ -224,57 +224,6 @@ def calc_win_prob(row, distribution, target):
     elif row['side'] == 'Over':
         return 1 - cdf_value
 
-def calc_sse(data, pdf_vals):
-    return np.sum((data - pdf_vals) ** 2)
-
-def ecdf(data):
-    sorted_data = np.sort(data)
-    n = len(data)
-    y_vals = np.arange(1, n + 1) / n
-    return sorted_data, y_vals
-
-def calc_prob_params(row, target):
-    mean = row['x{}'.format(target)]
-    std = row['{}Std'.format(target)]
-    
-    # Retrieve the sample data for the player
-    sample_data = row['x{}Sample'.format(target)]
-
-    # Compute the ECDF of the sample data
-    sorted_data, empirical_cdf = ecdf(sample_data)
-
-    # Normal Distribution: Method of Moments
-    norm_params = (mean, std)
-    norm_cdf_vals = norm.cdf(sorted_data, *norm_params)
-
-    # Check for zero or near-zero mean to avoid division by zero
-    if mean == 0:
-        best_fit = 'normal'  # Default to normal if gamma cannot be computed
-        gamma_shape = np.nan
-        gamma_scale = np.nan
-    else:
-        # Gamma Distribution: Method of Moments
-        gamma_shape = (mean / std) ** 2
-        gamma_scale = (std ** 2) / mean
-        gamma_params = (gamma_shape, 0, gamma_scale)  # Shape, loc, scale
-        gamma_cdf_vals = gamma.cdf(sorted_data, *gamma_params)
-
-        # Calculate SSE for both distributions
-        sse_normal = calc_sse(empirical_cdf, norm_cdf_vals)
-        sse_gamma = calc_sse(empirical_cdf, gamma_cdf_vals)
-
-        # Determine the best fit
-        if sse_normal < sse_gamma:
-            best_fit = 'normal'
-            gamma_shape = np.nan  # Not applicable if the best fit is normal
-            gamma_scale = np.nan  # Not applicable if the best fit is normal
-        else:
-            best_fit = 'gamma'
-    
-    # Return results as a Series
-    return pd.Series([best_fit, gamma_shape, gamma_scale], index=['best_fit', 'gamma_shape', 'gamma_scale'])
-
-
 def compile_backtest_results(probability_data, target, features, sportsbook=None):
     """
     """
